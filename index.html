@@ -98,13 +98,13 @@
   tr.flags-1 { background: var(--flag1); }
   tr.flags-0 { background: var(--flag0); }
   tr.flags-3 { background: var(--flag3); }
-  tr.flags-4, tr.flags-5, tr.flags-6, tr.flags-7, tr.flags-8 { background: var(--flag3); }
+  tr.flags-4, tr.flags-5, tr.flags-6, tr.flags-7, tr.flags-8, tr.flags-9 { background: var(--flag3); }
   tr.flags-2 td:first-child { border-left: 4px solid var(--flag2-border); }
   tr.flags-1 td:first-child { border-left: 4px solid var(--flag1-border); }
   tr.flags-0 td:first-child { border-left: 4px solid var(--flag0-border); }
   tr.flags-3 td:first-child { border-left: 4px solid var(--flag3-border); }
   tr.flags-4 td:first-child, tr.flags-5 td:first-child, tr.flags-6 td:first-child,
-  tr.flags-7 td:first-child, tr.flags-8 td:first-child { border-left: 4px solid var(--flag3-border); }
+  tr.flags-7 td:first-child, tr.flags-8 td:first-child, tr.flags-9 td:first-child { border-left: 4px solid var(--flag3-border); }
   .badge {
     display: inline-block;
     padding: 2px 8px;
@@ -122,6 +122,7 @@
   .badge-atypical { background: #59636e; color: white; }
   .badge-defense-dd { background: #c05b2c; color: white; }
   .badge-defense-avg { background: #3d7f56; color: white; }
+  .badge-bottom { background: #8b3f5f; color: white; }
   .badge-none { background: #7fbf8f; color: #08370f; }
   .muted { color: var(--muted); }
   .note {
@@ -136,13 +137,17 @@
 <body>
 
 <h1>Bridge Declarer Performance Analyzer</h1>
-<p class="subtitle">Upload an ACBL Live-for-Clubs pairs results page (.htm/.html). Flags boards where the chosen player, as declarer, fell short of the double-dummy result and/or fell short of other pairs who played the same suit from the same seat.</p>
+<p class="subtitle">Upload or paste an ACBL Live-for-Clubs pairs results page URL. Flags boards where the chosen player or partnership fell short of the available comparisons.</p>
 
 <div class="panel">
   <div class="controls">
     <div class="field">
       <label for="fileInput">Results file (.htm/.html)</label>
       <input type="file" id="fileInput" accept=".htm,.html,text/html">
+    </div>
+    <div class="field">
+      <label for="urlInput">Results URL</label>
+      <input type="url" id="urlInput" placeholder="https://example.com/results.html">
     </div>
     <div class="field">
       <label for="nameInput">Player name</label>
@@ -196,6 +201,7 @@
   <span class="badge badge-atypical">ATYPICAL</span> the partnership's suit was not among the most commonly played suits from that seat on the board.<br>
   <span class="badge badge-defense-dd">DEF-DD</span> while defending, the partnership allowed more tricks than the double-dummy analysis says the declarer should make.<br>
   <span class="badge badge-defense-avg">DEF-AVG</span> while defending, the partnership allowed more tricks than the field average for that contract and declaring seat.<br>
+  <span class="badge badge-bottom">BOTTOM</span> the partnership had the worst comparable result: fewest tricks when declaring or most tricks allowed when defending.<br>
   Rows are sorted with the most-flagged boards first. Comparisons are always seat-for-seat (e.g. North-declared spades vs. North-declared spades) since North/South/East/West each hold a fixed, different hand for a given board &mdash; only same-seat results are truly apples-to-apples.
 </div>
 
@@ -389,6 +395,10 @@ function analyzeDocument(doc, targetName, seatFilter) {
         ? contractPeers.reduce((sum, other) => sum + other.tricks, 0) / contractPeers.length
         : null;
       const flagAverage = isPartnershipDeclarer && averageContract !== null && rd.tricks < averageContract;
+      const comparableResults = [rd, ...contractPeers];
+      const performanceValue = result => isDefense ? -result.tricks : result.tricks;
+      const bottomPerformance = Math.min(...comparableResults.map(performanceValue));
+      const flagBottom = contractPeers.length > 0 && performanceValue(rd) === bottomPerformance;
 
       const group = (declSeat === 'N' || declSeat === 'S') ? 'NS' : 'EW';
       const seatIndex = (declSeat === 'N' || declSeat === 'E') ? 'first' : 'second';
@@ -438,10 +448,10 @@ function analyzeDocument(doc, targetName, seatFilter) {
         suit: rd.contract.suit, level: rd.contract.level, declSeat,
         tricks: rd.tricks, ddTricks, flagDD, bestPeer, flagPeer, averageContract, flagAverage,
         averageBidLevel, flagBidDD, flagBidAverage, flagAtypical,
-        partner, opponents, isDefense, isPartnerDeclared, flagDefenseDD, flagDefenseAverage,
+        partner, opponents, isDefense, isPartnerDeclared, flagDefenseDD, flagDefenseAverage, flagBottom,
         flagCount: (flagDD ? 1 : 0) + (flagPeer ? 1 : 0) + (flagAverage ? 1 : 0) +
           (flagBidDD ? 1 : 0) + (flagBidAverage ? 1 : 0) + (flagAtypical ? 1 : 0) +
-          (flagDefenseDD ? 1 : 0) + (flagDefenseAverage ? 1 : 0)
+          (flagDefenseDD ? 1 : 0) + (flagDefenseAverage ? 1 : 0) + (flagBottom ? 1 : 0)
       });
     });
   });
@@ -453,6 +463,7 @@ function analyzeDocument(doc, targetName, seatFilter) {
 // ---------- UI wiring ----------
 
 const fileInput = document.getElementById('fileInput');
+const urlInput = document.getElementById('urlInput');
 const nameInput = document.getElementById('nameInput');
 const seatInput = document.getElementById('seatInput');
 const analyzeBtn = document.getElementById('analyzeBtn');
@@ -461,10 +472,19 @@ const resultsPanel = document.getElementById('resultsPanel');
 const summaryEl = document.getElementById('summary');
 const resultsBody = document.getElementById('resultsBody');
 
-analyzeBtn.addEventListener('click', () => {
+function analyzeText(text, name, seat) {
+  const doc = new DOMParser().parseFromString(text, 'text/html');
+  const results = analyzeDocument(doc, name, seat);
+  renderResults(results, name, seat);
+  statusEl.textContent = `Done. Found ${results.length} board(s) where ${name} declared or defended` +
+    (seat !== 'Any' ? ` from ${seatLabel(seat)}` : '') + '.';
+}
+
+analyzeBtn.addEventListener('click', async () => {
   const file = fileInput.files[0];
-  if (!file) {
-    statusEl.textContent = 'Please choose an .htm/.html results file first.';
+  const url = urlInput.value.trim();
+  if (!file && !url) {
+    statusEl.textContent = 'Please choose an .htm/.html file or enter a results URL.';
     return;
   }
   const name = nameInput.value.trim();
@@ -474,18 +494,25 @@ analyzeBtn.addEventListener('click', () => {
   }
   const seat = seatInput.value;
 
-  statusEl.textContent = 'Reading file...';
+  statusEl.textContent = url ? 'Fetching URL...' : 'Reading file...';
   resultsPanel.style.display = 'none';
+
+  if (url) {
+    try {
+      const response = await fetch(new URL(url).href);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      analyzeText(await response.text(), name, seat);
+    } catch (err) {
+      console.error(err);
+      statusEl.textContent = 'Could not fetch the URL. The site may block browser access (CORS), or the URL may be invalid.';
+    }
+    return;
+  }
 
   const reader = new FileReader();
   reader.onload = (e) => {
     try {
-      const text = e.target.result;
-      const doc = new DOMParser().parseFromString(text, 'text/html');
-      const results = analyzeDocument(doc, name, seat);
-      renderResults(results, name, seat);
-      statusEl.textContent = `Done. Found ${results.length} board(s) where ${name} declared or defended` +
-        (seat !== 'Any' ? ` from ${seatLabel(seat)}` : '') + '.';
+      analyzeText(e.target.result, name, seat);
     } catch (err) {
       console.error(err);
       statusEl.textContent = 'Error parsing file: ' + err.message;
@@ -515,9 +542,10 @@ function renderResults(results, name, seat) {
   const flagged6 = results.filter(r => r.flagCount === 6).length;
   const flagged7 = results.filter(r => r.flagCount === 7).length;
   const flagged8 = results.filter(r => r.flagCount === 8).length;
+  const flagged9 = results.filter(r => r.flagCount === 9).length;
   summaryEl.innerHTML = `<strong>${results.length}</strong> board(s) analyzed for <strong>${escapeHtml(name)}</strong>` +
     (seat !== 'Any' ? ` (seat: ${seatLabel(seat)})` : ' (any seat)') +
-    ` &mdash; ${flagged8} board(s) with eight flags, ${flagged7} with seven, ${flagged6} with six, ${flagged5} with five, ${flagged4} with four, ${flagged3} with three, ${flagged2} with two, ${flagged1} with one, ${flagged0} with no flags.`;
+    ` &mdash; ${flagged9} board(s) with nine flags, ${flagged8} with eight, ${flagged7} with seven, ${flagged6} with six, ${flagged5} with five, ${flagged4} with four, ${flagged3} with three, ${flagged2} with two, ${flagged1} with one, ${flagged0} with no flags.`;
 
   results.forEach(r => {
     const tr = document.createElement('tr');
@@ -543,8 +571,9 @@ function renderResults(results, name, seat) {
     if (r.flagBidDD) badges += '<span class="badge badge-bid-dd">BID-DD</span>';
     if (r.flagBidAverage) badges += '<span class="badge badge-bid-avg">BID-AVG</span>';
     if (r.flagAtypical) badges += '<span class="badge badge-atypical">ATYPICAL</span>';
+    if (r.flagBottom) badges += '<span class="badge badge-bottom">BOTTOM</span>';
     if (!r.flagDD && !r.flagPeer && !r.flagAverage && !r.flagBidDD && !r.flagBidAverage && !r.flagAtypical &&
-      !r.flagDefenseDD && !r.flagDefenseAverage) {
+      !r.flagDefenseDD && !r.flagDefenseAverage && !r.flagBottom) {
       badges = '<span class="badge badge-none">clean</span>';
     }
 
