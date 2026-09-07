@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Bridge Declarer Performance Analyzer</title>
+<style>
+  :root {
+    --bg: #f7f7f9;
+    --card-bg: #ffffff;
+    --border: #dcdde1;
+    --text: #202124;
+    --muted: #6b7280;
+    --accent: #2f5c8a;
+    --flag2: #ffd6d6;
+    --flag2-border: #e05a5a;
+    --flag3: #f3d8e8;
+    --flag3-border: #b04a7c;
+    --flag1: #fff3cd;
+    --flag1-border: #e0b23a;
+    --flag0: #e8f6ec;
+    --flag0-border: #7fbf8f;
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    margin: 0;
+    padding: 24px;
+  }
+  h1 { font-size: 22px; margin-bottom: 4px; }
+  p.subtitle { color: var(--muted); margin-top: 0; margin-bottom: 20px; }
+  .panel {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px 20px;
+    margin-bottom: 20px;
+  }
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-items: flex-end;
+  }
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .field label {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  input[type="text"], select, input[type="file"] {
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 14px;
+    background: white;
+  }
+  button {
+    padding: 9px 18px;
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button:hover { background: #244a70; }
+  button:disabled { background: #a9b6c2; cursor: not-allowed; }
+  #status { margin-top: 10px; font-size: 13px; color: var(--muted); white-space: pre-wrap; }
+  #summary { font-size: 14px; margin-bottom: 14px; color: var(--text); }
+  table.results {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13.5px;
+  }
+  table.results th, table.results td {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    vertical-align: top;
+  }
+  table.results th {
+    background: #eef1f5;
+    font-size: 11.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--muted);
+  }
+  tr.flags-2 { background: var(--flag2); }
+  tr.flags-1 { background: var(--flag1); }
+  tr.flags-0 { background: var(--flag0); }
+  tr.flags-3 { background: var(--flag3); }
+  tr.flags-2 td:first-child { border-left: 4px solid var(--flag2-border); }
+  tr.flags-1 td:first-child { border-left: 4px solid var(--flag1-border); }
+  tr.flags-0 td:first-child { border-left: 4px solid var(--flag0-border); }
+  tr.flags-3 td:first-child { border-left: 4px solid var(--flag3-border); }
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 700;
+    margin-right: 4px;
+    white-space: nowrap;
+  }
+  .badge-dd { background: #e05a5a; color: white; }
+  .badge-peer { background: #e0b23a; color: #3a2c00; }
+  .badge-avg { background: #b04a7c; color: white; }
+  .badge-none { background: #7fbf8f; color: #08370f; }
+  .muted { color: var(--muted); }
+  .note {
+    font-size: 12.5px;
+    color: var(--muted);
+    margin-top: 14px;
+    line-height: 1.5;
+  }
+  code { background: #eef1f5; padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+
+<h1>Bridge Declarer Performance Analyzer</h1>
+<p class="subtitle">Upload an ACBL Live-for-Clubs pairs results page (.htm/.html). Flags boards where the chosen player, as declarer, fell short of the double-dummy result and/or fell short of other pairs who played the same suit from the same seat.</p>
+
+<div class="panel">
+  <div class="controls">
+    <div class="field">
+      <label for="fileInput">Results file (.htm/.html)</label>
+      <input type="file" id="fileInput" accept=".htm,.html,text/html">
+    </div>
+    <div class="field">
+      <label for="nameInput">Player name</label>
+      <input type="text" id="nameInput" value="Reid Booth">
+    </div>
+    <div class="field">
+      <label for="seatInput">Seat</label>
+      <select id="seatInput">
+        <option value="Any" selected>Any seat</option>
+        <option value="N">North</option>
+        <option value="S">South</option>
+        <option value="E">East</option>
+        <option value="W">West</option>
+      </select>
+    </div>
+    <div class="field">
+      <button id="analyzeBtn">Analyze</button>
+    </div>
+  </div>
+  <div id="status"></div>
+</div>
+
+<div class="panel" id="resultsPanel" style="display:none;">
+  <div id="summary"></div>
+  <table class="results" id="resultsTable">
+    <thead>
+      <tr>
+        <th>Board</th>
+        <th>Contract</th>
+        <th>Seat</th>
+        <th>Partner</th>
+        <th>Opponents</th>
+        <th>Tricks Taken</th>
+        <th>Double Dummy</th>
+        <th>Peer Average (same contract)</th>
+        <th>Best Peer (same suit/seat)</th>
+        <th>Flags</th>
+      </tr>
+    </thead>
+    <tbody id="resultsBody"></tbody>
+  </table>
+</div>
+
+<div class="note">
+  <strong>How flags work:</strong><br>
+  <span class="badge badge-dd">DD</span> the player took fewer tricks as declarer than the double-dummy solver says were makeable from that exact seat, in that exact suit, on that board.<br>
+  <span class="badge badge-peer">PEER</span> another pair who declared the <em>same suit</em> from the <em>same seat</em> on that board (any contract level) took more tricks than the player did.<br>
+  <span class="badge badge-avg">AVG</span> the player took fewer tricks than the average of other pairs who played the <em>same contract</em> from the <em>same seat</em> on that board.<br>
+  Rows are sorted with the most-flagged boards first. Comparisons are always seat-for-seat (e.g. North-declared spades vs. North-declared spades) since North/South/East/West each hold a fixed, different hand for a given board &mdash; only same-seat results are truly apples-to-apples.
+</div>
+
+<script>
+// ---------- Parsing helpers ----------
+
+function parseHref(href) {
+  try {
+    const url = new URL(href);
+    const params = url.searchParams;
+    return {
+      nn: (params.get('nn') || '').trim(),
+      sn: (params.get('sn') || '').trim(),
+      en: (params.get('en') || '').trim(),
+      wn: (params.get('wn') || '').trim(),
+      p: params.get('p') || ''
+    };
+  } catch (e) {
+    return null;
+  }
+}
+
+function parseDDTokens(str, target) {
+  const tokens = str.trim().split(/\s+/).filter(Boolean);
+  tokens.forEach(tok => {
+    let m;
+    if ((m = tok.match(/^!([CDHS])(\d+)(?:\/(\d+))?$/))) {
+      const suit = m[1];
+      const f = +m[2];
+      const s = m[3] !== undefined ? +m[3] : f;
+      target[suit] = { first: f, second: s };
+    } else if ((m = tok.match(/^NT(\d+)(?:\/(\d+))?$/))) {
+      const f = +m[1];
+      const s = m[2] !== undefined ? +m[2] : f;
+      target['NT'] = { first: f, second: s };
+    } else if ((m = tok.match(/^(\d+)(?:\/(\d+))?!([CDHS])$/))) {
+      const suit = m[3];
+      const l1 = +m[1];
+      const l2 = m[2] !== undefined ? +m[2] : l1;
+      target[suit] = { first: l1 + 6, second: l2 + 6 };
+    } else if ((m = tok.match(/^(\d+)(?:\/(\d+))?NT$/))) {
+      const l1 = +m[1];
+      const l2 = m[2] !== undefined ? +m[2] : l1;
+      target['NT'] = { first: l1 + 6, second: l2 + 6 };
+    }
+    // unrecognized tokens are silently ignored
+  });
+}
+
+function buildDDMap(pText) {
+  const nsMatch = pText.match(/Double Dummy N\/S:<\/b>([^<]*)/);
+  const ewMatch = pText.match(/Double Dummy E\/W:<\/b>([^<]*)/);
+  const map = { NS: {}, EW: {} };
+  if (nsMatch) parseDDTokens(nsMatch[1], map.NS);
+  if (ewMatch) parseDDTokens(ewMatch[1], map.EW);
+  return map;
+}
+
+function parseContractCell(td) {
+  if (!td) return null;
+  const text = td.textContent.replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+  const parts = text.split(' ');
+  if (parts.length < 2) return null;
+  const level = parseInt(parts[0], 10);
+  if (isNaN(level)) return null;
+  const declarer = parts[parts.length - 1];
+  if (!['N', 'S', 'E', 'W'].includes(declarer)) return null;
+  let suit = null;
+  const icon = td.querySelector('i.fa');
+  if (icon) {
+    if (icon.classList.contains('spades')) suit = 'S';
+    else if (icon.classList.contains('hearts')) suit = 'H';
+    else if (icon.classList.contains('diamonds')) suit = 'D';
+    else if (icon.classList.contains('clubs')) suit = 'C';
+  } else if (text.indexOf('NT') !== -1) {
+    suit = 'NT';
+  }
+  if (!suit) return null;
+  return { level, suit, declarer };
+}
+
+function parseResultDelta(text) {
+  if (text === undefined || text === null) return null;
+  text = text.trim();
+  if (text === '=' || text === '') return 0;
+  const m = text.match(/^([+-])(\d+)$/);
+  if (!m) return null;
+  return (m[1] === '+' ? 1 : -1) * parseInt(m[2], 10);
+}
+
+function suitLabel(suit) {
+  const map = { C: '\u2663', D: '\u2666', H: '\u2665', S: '\u2660', NT: 'NT' };
+  return map[suit] || suit;
+}
+
+function seatLabel(seat) {
+  const map = { N: 'North', S: 'South', E: 'East', W: 'West' };
+  return map[seat] || seat;
+}
+
+// ---------- Core analysis ----------
+
+function analyzeDocument(doc, targetName, seatFilter) {
+  const results = [];
+  const target = targetName.trim().toLowerCase();
+  const containers = doc.querySelectorAll('div.row');
+
+  containers.forEach(container => {
+    const cls = [...container.classList];
+    const boardClass = cls.find(c => /^board_li_[A-Za-z]+_\d+$/.test(c));
+    if (!boardClass) return;
+    if (!container.querySelector('.double-dummy')) return;
+
+    const m = boardClass.match(/^board_li_([A-Za-z]+)_(\d+)$/);
+    const section = m[1];
+    const boardNum = parseInt(m[2], 10);
+
+    const table = container.querySelector('table.board-table');
+    if (!table || !table.tBodies.length) return;
+    const rows = [...table.tBodies[0].rows];
+
+    // Build the double-dummy map for this board from the first row that has a play link.
+    let ddMap = null;
+    for (const row of rows) {
+      const a = row.querySelector('a[href]');
+      if (a) {
+        const parsed = parseHref(a.getAttribute('href'));
+        if (parsed && parsed.p) {
+          ddMap = buildDDMap(parsed.p);
+          break;
+        }
+      }
+    }
+
+    // Parse every row (every table's play of this board).
+    const rowData = rows.map(row => {
+      const contract = parseContractCell(row.cells[0]);
+      const resultText = row.cells[1] ? row.cells[1].textContent : '';
+      const delta = parseResultDelta(resultText);
+      const a = row.querySelector('a[href]');
+      const names = a ? parseHref(a.getAttribute('href')) : null;
+      if (!contract || delta === null || !names) return null;
+      return { contract, tricks: contract.level + 6 + delta, names };
+    }).filter(Boolean);
+
+    rowData.forEach(rd => {
+      const seatNames = { N: rd.names.nn, S: rd.names.sn, E: rd.names.en, W: rd.names.wn };
+      const declSeat = rd.contract.declarer;
+      const declName = seatNames[declSeat];
+      if (!declName || declName.toLowerCase() !== target) return;
+      if (seatFilter !== 'Any' && seatFilter !== declSeat) return;
+
+      // Double-dummy comparison for this exact seat + suit.
+      let ddTricks = null;
+      if (ddMap) {
+        const group = (declSeat === 'N' || declSeat === 'S') ? 'NS' : 'EW';
+        const suitData = ddMap[group] && ddMap[group][rd.contract.suit];
+        if (suitData) {
+          ddTricks = (declSeat === 'N' || declSeat === 'E') ? suitData.first : suitData.second;
+        }
+      }
+      const flagDD = ddTricks !== null && rd.tricks < ddTricks;
+
+      // Peer comparison: same board, same suit, same declaring seat, different row.
+      let bestPeer = null;
+      rowData.forEach(other => {
+        if (other === rd) return;
+        if (other.contract.suit !== rd.contract.suit) return;
+        if (other.contract.declarer !== declSeat) return;
+        if (bestPeer === null || other.tricks > bestPeer) bestPeer = other.tricks;
+      });
+      const flagPeer = bestPeer !== null && bestPeer > rd.tricks;
+
+      // Compare with other pairs playing this exact contract from this seat.
+      const contractPeers = rowData.filter(other =>
+        other !== rd &&
+        other.contract.level === rd.contract.level &&
+        other.contract.suit === rd.contract.suit &&
+        other.contract.declarer === declSeat
+      );
+      const averageContract = contractPeers.length
+        ? contractPeers.reduce((sum, other) => sum + other.tricks, 0) / contractPeers.length
+        : null;
+      const flagAverage = averageContract !== null && rd.tricks < averageContract;
+
+      let partner, opponents;
+      if (declSeat === 'N') { partner = rd.names.sn; opponents = [rd.names.en, rd.names.wn]; }
+      else if (declSeat === 'S') { partner = rd.names.nn; opponents = [rd.names.en, rd.names.wn]; }
+      else if (declSeat === 'E') { partner = rd.names.wn; opponents = [rd.names.nn, rd.names.sn]; }
+      else { partner = rd.names.en; opponents = [rd.names.nn, rd.names.sn]; }
+
+      results.push({
+        section, boardNum,
+        suit: rd.contract.suit, level: rd.contract.level, declSeat,
+        tricks: rd.tricks, ddTricks, flagDD, bestPeer, flagPeer, averageContract, flagAverage,
+        partner, opponents,
+        flagCount: (flagDD ? 1 : 0) + (flagPeer ? 1 : 0) + (flagAverage ? 1 : 0)
+      });
+    });
+  });
+
+  results.sort((a, b) => b.flagCount - a.flagCount || a.boardNum - b.boardNum);
+  return results;
+}
+
+// ---------- UI wiring ----------
+
+const fileInput = document.getElementById('fileInput');
+const nameInput = document.getElementById('nameInput');
+const seatInput = document.getElementById('seatInput');
+const analyzeBtn = document.getElementById('analyzeBtn');
+const statusEl = document.getElementById('status');
+const resultsPanel = document.getElementById('resultsPanel');
+const summaryEl = document.getElementById('summary');
+const resultsBody = document.getElementById('resultsBody');
+
+analyzeBtn.addEventListener('click', () => {
+  const file = fileInput.files[0];
+  if (!file) {
+    statusEl.textContent = 'Please choose an .htm/.html results file first.';
+    return;
+  }
+  const name = nameInput.value.trim();
+  if (!name) {
+    statusEl.textContent = 'Please enter a player name.';
+    return;
+  }
+  const seat = seatInput.value;
+
+  statusEl.textContent = 'Reading file...';
+  resultsPanel.style.display = 'none';
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const text = e.target.result;
+      const doc = new DOMParser().parseFromString(text, 'text/html');
+      const results = analyzeDocument(doc, name, seat);
+      renderResults(results, name, seat);
+      statusEl.textContent = `Done. Found ${results.length} board(s) where ${name} was declarer` +
+        (seat !== 'Any' ? ` from ${seatLabel(seat)}` : '') + '.';
+    } catch (err) {
+      console.error(err);
+      statusEl.textContent = 'Error parsing file: ' + err.message;
+    }
+  };
+  reader.onerror = () => {
+    statusEl.textContent = 'Could not read the file.';
+  };
+  reader.readAsText(file);
+});
+
+function renderResults(results, name, seat) {
+  resultsBody.innerHTML = '';
+  if (!results.length) {
+    resultsPanel.style.display = 'block';
+    summaryEl.textContent = `No boards found where "${name}" declared` +
+      (seat !== 'Any' ? ` from ${seatLabel(seat)}` : '') + '. Check the spelling of the name, or try "Any seat".';
+    return;
+  }
+
+  const flagged2 = results.filter(r => r.flagCount === 2).length;
+  const flagged1 = results.filter(r => r.flagCount === 1).length;
+  const flagged0 = results.filter(r => r.flagCount === 0).length;
+  const flagged3 = results.filter(r => r.flagCount === 3).length;
+  summaryEl.innerHTML = `<strong>${results.length}</strong> board(s) analyzed for <strong>${escapeHtml(name)}</strong>` +
+    (seat !== 'Any' ? ` (seat: ${seatLabel(seat)})` : ' (any seat)') +
+    ` &mdash; ${flagged3} board(s) with three flags, ${flagged2} with two, ${flagged1} with one, ${flagged0} with no flags.`;
+
+  results.forEach(r => {
+    const tr = document.createElement('tr');
+    tr.className = 'flags-' + r.flagCount;
+
+    const contractStr = `${r.level}${suitLabel(r.suit)}`;
+    const ddStr = r.ddTricks !== null ? `${r.ddTricks} tricks` : '<span class="muted">n/a</span>';
+    const peerStr = r.bestPeer !== null ? `${r.bestPeer} tricks` : '<span class="muted">n/a</span>';
+    const averageStr = r.averageContract !== null
+      ? `${r.averageContract.toFixed(1)} tricks`
+      : '<span class="muted">n/a</span>';
+
+    let badges = '';
+    if (r.flagDD) badges += '<span class="badge badge-dd">DD</span>';
+    if (r.flagPeer) badges += '<span class="badge badge-peer">PEER</span>';
+    if (r.flagAverage) badges += '<span class="badge badge-avg">AVG</span>';
+    if (!r.flagDD && !r.flagPeer && !r.flagAverage) badges = '<span class="badge badge-none">clean</span>';
+
+    tr.innerHTML = `
+      <td>${r.boardNum}${r.section ? ` <span class="muted">(Sec ${escapeHtml(r.section)})</span>` : ''}</td>
+      <td>${contractStr} ${r.declSeat}</td>
+      <td>${seatLabel(r.declSeat)}</td>
+      <td>${escapeHtml(r.partner || '')}</td>
+      <td>${escapeHtml((r.opponents || []).join(' & '))}</td>
+      <td>${r.tricks}</td>
+      <td>${ddStr}</td>
+      <td>${averageStr}</td>
+      <td>${peerStr}</td>
+      <td>${badges}</td>
+    `;
+    resultsBody.appendChild(tr);
+  });
+
+  resultsPanel.style.display = 'block';
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+</script>
+
+</body>
+</html>
