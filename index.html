@@ -94,6 +94,8 @@
     letter-spacing: 0.03em;
     color: var(--muted);
   }
+  table.results tbody tr { cursor: pointer; }
+  table.results tbody tr.selected { outline: 2px solid var(--accent); outline-offset: -2px; }
   tr.flags-2 { background: var(--flag2); }
   tr.flags-1 { background: var(--flag1); }
   tr.flags-0 { background: var(--flag0); }
@@ -132,6 +134,11 @@
   .badge-bad-suit { background: #6b5b2a; color: white; }
   .badge-none { background: #7fbf8f; color: #08370f; }
   .muted { color: var(--muted); }
+  .interpretation { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 16px; }
+  .interpretation h2 { font-size: 16px; margin: 0 0 8px; }
+  .interpretation-meta { color: var(--muted); font-size: 13px; margin-bottom: 10px; }
+  .interpretation ul { margin: 8px 0 0; padding-left: 20px; }
+  .interpretation li { margin: 6px 0; line-height: 1.4; }
   .note {
     font-size: 12.5px;
     color: var(--muted);
@@ -196,6 +203,12 @@
     </thead>
     <tbody id="resultsBody"></tbody>
   </table>
+  <div class="interpretation" id="interpretationPanel" style="display:none;">
+    <h2>Selected board interpretation</h2>
+    <div class="interpretation-meta" id="interpretationMeta"></div>
+    <div id="interpretationMetrics"></div>
+    <ul id="interpretationFlags"></ul>
+  </div>
 </div>
 
 <div class="note">
@@ -522,6 +535,10 @@ const statusEl = document.getElementById('status');
 const resultsPanel = document.getElementById('resultsPanel');
 const summaryEl = document.getElementById('summary');
 const resultsBody = document.getElementById('resultsBody');
+const interpretationPanel = document.getElementById('interpretationPanel');
+const interpretationMeta = document.getElementById('interpretationMeta');
+const interpretationMetrics = document.getElementById('interpretationMetrics');
+const interpretationFlags = document.getElementById('interpretationFlags');
 
 function analyzeText(text, name, seat) {
   const doc = new DOMParser().parseFromString(text, 'text/html');
@@ -577,6 +594,8 @@ analyzeBtn.addEventListener('click', async () => {
 
 function renderResults(results, name, seat) {
   resultsBody.innerHTML = '';
+  interpretationPanel.style.display = 'none';
+  interpretationFlags.innerHTML = '';
   if (!results.length) {
     resultsPanel.style.display = 'block';
     summaryEl.textContent = `No boards found where "${name}" declared` +
@@ -646,10 +665,45 @@ function renderResults(results, name, seat) {
       <td>${defenseAverageStr}</td>
       <td>${badges}</td>
     `;
+    tr.addEventListener('click', () => {
+      document.querySelectorAll('#resultsBody tr.selected').forEach(row => row.classList.remove('selected'));
+      tr.classList.add('selected');
+      renderInterpretation(r);
+    });
     resultsBody.appendChild(tr);
   });
 
   resultsPanel.style.display = 'block';
+}
+
+function renderInterpretation(result) {
+  const contract = `${result.level}${suitLabel(result.suit)} ${result.declSeat}`;
+  interpretationMeta.textContent = `Board ${result.boardNum}${result.section ? ` (Section ${result.section})` : ''} | ` +
+    `${result.isDefense ? 'Defended' : result.isPartnerDeclared ? 'Partner declared' : 'Declared'} | Contract ${contract}`;
+  interpretationMetrics.innerHTML = `
+    <strong>Result:</strong> ${result.tricks} tricks taken` +
+    (result.ddTricks !== null ? `; double dummy: ${result.ddTricks}` : '; double dummy: n/a') +
+    (result.averageContract !== null ? `; same-contract field average: ${result.averageContract.toFixed(1)}` : '; same-contract field average: n/a') +
+    (result.bestPeer !== null ? `; best same-suit/seat peer: ${result.bestPeer}` : '; best same-suit/seat peer: n/a');
+
+  const explanations = [];
+  if (result.flagDD) explanations.push('<span class="badge badge-dd">DD</span> The partnership took fewer tricks than double dummy made available.');
+  if (result.flagPeer) explanations.push('<span class="badge badge-peer">PEER</span> Another pair in the same suit and seat took more tricks.');
+  if (result.flagAverage) explanations.push('<span class="badge badge-avg">AVG</span> The partnership took fewer tricks than the average result for this exact contract and seat.');
+  if (result.flagBidDD) explanations.push('<span class="badge badge-bid-dd">BID-DD</span> The partnership used the DD-preferred suit but bid above the DD-supported level.');
+  if (result.flagBidAverage) explanations.push('<span class="badge badge-bid-avg">BID-AVG</span> The partnership bid above the field average level for this suit and seat.');
+  if (result.flagAtypical) explanations.push('<span class="badge badge-atypical">ATYPICAL</span> The partnership chose a suit that was not among the field\'s most common same-seat suits.');
+  if (result.flagBottom) explanations.push('<span class="badge badge-bottom">BOTTOM</span> This was the worst comparable result: fewest tricks declaring or most tricks allowed defending.');
+  if (result.flagDefenseDD) explanations.push('<span class="badge badge-defense-dd">DEF-DD</span> The defense allowed more tricks than double dummy expected.');
+  if (result.flagDefenseAverage) explanations.push('<span class="badge badge-defense-avg">DEF-AVG</span> The defense allowed more tricks than the field average for this contract and seat.');
+  if (result.flagLowDD) explanations.push('<span class="badge badge-low-dd">LOW-DD</span> Double dummy supported game or slam, but the partnership stopped below that level.');
+  if (result.flagLowAverage) explanations.push('<span class="badge badge-low-avg">LOW-AVG</span> The field average supported game or slam, but the partnership stopped below that level.');
+  if (result.flagBadSuit) explanations.push('<span class="badge badge-bad-suit">BAD-SUIT</span> The partnership reached game or slam in a suit inferior to both the DD and field-preferred suits.');
+
+  interpretationFlags.innerHTML = explanations.length
+    ? explanations.map(explanation => `<li>${explanation}</li>`).join('')
+    : '<li><span class="badge badge-none">clean</span> No flags apply to this board.</li>';
+  interpretationPanel.style.display = 'block';
 }
 
 function escapeHtml(str) {
