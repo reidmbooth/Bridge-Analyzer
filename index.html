@@ -101,14 +101,14 @@
   tr.flags-0 { background: var(--flag0); }
   tr.flags-3 { background: var(--flag3); }
   tr.flags-4, tr.flags-5, tr.flags-6, tr.flags-7, tr.flags-8, tr.flags-9 { background: var(--flag3); }
-  tr.flags-10, tr.flags-11, tr.flags-12 { background: var(--flag3); }
+  tr.flags-10, tr.flags-11, tr.flags-12, tr.flags-13 { background: var(--flag3); }
   tr.flags-2 td:first-child { border-left: 4px solid var(--flag2-border); }
   tr.flags-1 td:first-child { border-left: 4px solid var(--flag1-border); }
   tr.flags-0 td:first-child { border-left: 4px solid var(--flag0-border); }
   tr.flags-3 td:first-child { border-left: 4px solid var(--flag3-border); }
   tr.flags-4 td:first-child, tr.flags-5 td:first-child, tr.flags-6 td:first-child,
   tr.flags-7 td:first-child, tr.flags-8 td:first-child, tr.flags-9 td:first-child,
-  tr.flags-10 td:first-child, tr.flags-11 td:first-child, tr.flags-12 td:first-child {
+  tr.flags-10 td:first-child, tr.flags-11 td:first-child, tr.flags-12 td:first-child, tr.flags-13 td:first-child {
     border-left: 4px solid var(--flag3-border);
   }
   .badge {
@@ -132,6 +132,7 @@
   .badge-low-dd { background: #a34f22; color: white; }
   .badge-low-avg { background: #356c9b; color: white; }
   .badge-bad-suit { background: #6b5b2a; color: white; }
+  .badge-double { background: #9a3d3d; color: white; }
   .badge-none { background: #7fbf8f; color: #08370f; }
   .muted { color: var(--muted); }
   .interpretation { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 16px; }
@@ -225,6 +226,7 @@
   <span class="badge badge-low-dd">LOW-DD</span> the partnership stopped below a game or slam level supported by double dummy.<br>
   <span class="badge badge-low-avg">LOW-AVG</span> the partnership stopped below a game or slam level supported by the field's average bid.<br>
   <span class="badge badge-bad-suit">BAD-SUIT</span> the partnership reached game or slam in a suit that was worse than both the double-dummy and field-preferred suits.<br>
+  <span class="badge badge-double">DOUBLE</span> while defending, double dummy says the undoubled contract should fail, so the partnership could have doubled it.<br>
   Rows are sorted with the most-flagged boards first. Comparisons are always seat-for-seat (e.g. North-declared spades vs. North-declared spades) since North/South/East/West each hold a fixed, different hand for a given board &mdash; only same-seat results are truly apples-to-apples.
 </div>
 
@@ -293,6 +295,9 @@ function parseContractCell(td) {
   if (isNaN(level)) return null;
   const declarer = parts[parts.length - 1];
   if (!['N', 'S', 'E', 'W'].includes(declarer)) return null;
+  const doubling = parts.slice(1, -1).some(part => part.toLowerCase() === 'xx')
+    ? 'XX'
+    : parts.slice(1, -1).some(part => part.toLowerCase() === 'x') ? 'X' : '';
   let suit = null;
   const icon = td.querySelector('i.fa');
   if (icon) {
@@ -304,7 +309,7 @@ function parseContractCell(td) {
     suit = 'NT';
   }
   if (!suit) return null;
-  return { level, suit, declarer };
+  return { level, suit, declarer, doubling };
 }
 
 function parseResultDelta(text) {
@@ -412,6 +417,7 @@ function analyzeDocument(doc, targetName, seatFilter) {
         other !== rd &&
         other.contract.level === rd.contract.level &&
         other.contract.suit === rd.contract.suit &&
+        other.contract.doubling === rd.contract.doubling &&
         other.contract.declarer === declSeat
       );
       const averageContract = contractPeers.length
@@ -504,17 +510,18 @@ function analyzeDocument(doc, targetName, seatFilter) {
 
       const flagDefenseDD = isDefense && ddTricks !== null && rd.tricks > ddTricks;
       const flagDefenseAverage = isDefense && averageContract !== null && rd.tricks > averageContract;
+      const flagDouble = isDefense && !rd.contract.doubling && ddTricks !== null && ddTricks < rd.contract.level + 6;
 
       results.push({
         section, boardNum,
-        suit: rd.contract.suit, level: rd.contract.level, declSeat,
+        suit: rd.contract.suit, level: rd.contract.level, doubling: rd.contract.doubling, declSeat,
         tricks: rd.tricks, ddTricks, flagDD, bestPeer, flagPeer, averageContract, flagAverage,
         averageBidLevel, flagBidDD, flagBidAverage, flagAtypical,
-        partner, opponents, isDefense, isPartnerDeclared, flagDefenseDD, flagDefenseAverage, flagBottom,
+        partner, opponents, isDefense, isPartnerDeclared, flagDefenseDD, flagDefenseAverage, flagDouble, flagBottom,
         flagLowDD, flagLowAverage, flagBadSuit,
         flagCount: (flagDD ? 1 : 0) + (flagPeer ? 1 : 0) + (flagAverage ? 1 : 0) +
           (flagBidDD ? 1 : 0) + (flagBidAverage ? 1 : 0) + (flagAtypical ? 1 : 0) +
-          (flagDefenseDD ? 1 : 0) + (flagDefenseAverage ? 1 : 0) + (flagBottom ? 1 : 0) +
+          (flagDefenseDD ? 1 : 0) + (flagDefenseAverage ? 1 : 0) + (flagDouble ? 1 : 0) + (flagBottom ? 1 : 0) +
           (flagLowDD ? 1 : 0) + (flagLowAverage ? 1 : 0) + (flagBadSuit ? 1 : 0)
       });
     });
@@ -616,15 +623,16 @@ function renderResults(results, name, seat) {
   const flagged10 = results.filter(r => r.flagCount === 10).length;
   const flagged11 = results.filter(r => r.flagCount === 11).length;
   const flagged12 = results.filter(r => r.flagCount === 12).length;
+  const flagged13 = results.filter(r => r.flagCount === 13).length;
   summaryEl.innerHTML = `<strong>${results.length}</strong> board(s) analyzed for <strong>${escapeHtml(name)}</strong>` +
     (seat !== 'Any' ? ` (seat: ${seatLabel(seat)})` : ' (any seat)') +
-    ` &mdash; ${flagged12} board(s) with twelve flags, ${flagged11} with eleven, ${flagged10} with ten, ${flagged9} with nine, ${flagged8} with eight, ${flagged7} with seven, ${flagged6} with six, ${flagged5} with five, ${flagged4} with four, ${flagged3} with three, ${flagged2} with two, ${flagged1} with one, ${flagged0} with no flags.`;
+    ` &mdash; ${flagged13} board(s) with thirteen flags, ${flagged12} with twelve, ${flagged11} with eleven, ${flagged10} with ten, ${flagged9} with nine, ${flagged8} with eight, ${flagged7} with seven, ${flagged6} with six, ${flagged5} with five, ${flagged4} with four, ${flagged3} with three, ${flagged2} with two, ${flagged1} with one, ${flagged0} with no flags.`;
 
   results.forEach(r => {
     const tr = document.createElement('tr');
     tr.className = 'flags-' + r.flagCount;
 
-    const contractStr = `${r.level}${suitLabel(r.suit)}`;
+    const contractStr = `${r.level}${suitLabel(r.suit)}${r.doubling === 'XX' ? 'XX' : r.doubling === 'X' ? 'X' : ''}`;
     const ddStr = r.ddTricks !== null ? `${r.ddTricks} tricks` : '<span class="muted">n/a</span>';
     const peerStr = r.bestPeer !== null ? `${r.bestPeer} tricks` : '<span class="muted">n/a</span>';
     const averageStr = r.averageContract !== null
@@ -645,11 +653,12 @@ function renderResults(results, name, seat) {
     if (r.flagBidAverage) badges += '<span class="badge badge-bid-avg">BID-AVG</span>';
     if (r.flagAtypical) badges += '<span class="badge badge-atypical">ATYPICAL</span>';
     if (r.flagBottom) badges += '<span class="badge badge-bottom">BOTTOM</span>';
+    if (r.flagDouble) badges += '<span class="badge badge-double">DOUBLE</span>';
     if (r.flagLowDD) badges += '<span class="badge badge-low-dd">LOW-DD</span>';
     if (r.flagLowAverage) badges += '<span class="badge badge-low-avg">LOW-AVG</span>';
     if (r.flagBadSuit) badges += '<span class="badge badge-bad-suit">BAD-SUIT</span>';
     if (!r.flagDD && !r.flagPeer && !r.flagAverage && !r.flagBidDD && !r.flagBidAverage && !r.flagAtypical &&
-      !r.flagDefenseDD && !r.flagDefenseAverage && !r.flagBottom && !r.flagLowDD && !r.flagLowAverage && !r.flagBadSuit) {
+      !r.flagDefenseDD && !r.flagDefenseAverage && !r.flagDouble && !r.flagBottom && !r.flagLowDD && !r.flagLowAverage && !r.flagBadSuit) {
       badges = '<span class="badge badge-none">clean</span>';
     }
 
@@ -677,7 +686,8 @@ function renderResults(results, name, seat) {
 }
 
 function renderInterpretation(result) {
-  const contract = `${result.level}${suitLabel(result.suit)} ${result.declSeat}`;
+  const doublingLabel = result.doubling === 'XX' ? 'XX' : result.doubling === 'X' ? 'X' : '';
+  const contract = `${result.level}${suitLabel(result.suit)}${doublingLabel} ${result.declSeat}`;
   interpretationMeta.textContent = `Board ${result.boardNum}${result.section ? ` (Section ${result.section})` : ''} | ` +
     `${result.isDefense ? 'Defended' : result.isPartnerDeclared ? 'Partner declared' : 'Declared'} | Contract ${contract}`;
   interpretationMetrics.innerHTML = `
@@ -696,6 +706,7 @@ function renderInterpretation(result) {
   if (result.flagBottom) explanations.push('<span class="badge badge-bottom">BOTTOM</span> This was the worst comparable result: fewest tricks declaring or most tricks allowed defending.');
   if (result.flagDefenseDD) explanations.push('<span class="badge badge-defense-dd">DEF-DD</span> The defense allowed more tricks than double dummy expected.');
   if (result.flagDefenseAverage) explanations.push('<span class="badge badge-defense-avg">DEF-AVG</span> The defense allowed more tricks than the field average for this contract and seat.');
+  if (result.flagDouble) explanations.push('<span class="badge badge-double">DOUBLE</span> Double dummy says this undoubled contract should fail, so it could have been doubled.');
   if (result.flagLowDD) explanations.push('<span class="badge badge-low-dd">LOW-DD</span> Double dummy supported game or slam, but the partnership stopped below that level.');
   if (result.flagLowAverage) explanations.push('<span class="badge badge-low-avg">LOW-AVG</span> The field average supported game or slam, but the partnership stopped below that level.');
   if (result.flagBadSuit) explanations.push('<span class="badge badge-bad-suit">BAD-SUIT</span> The partnership reached game or slam in a suit inferior to both the DD and field-preferred suits.');
