@@ -99,12 +99,16 @@
   tr.flags-0 { background: var(--flag0); }
   tr.flags-3 { background: var(--flag3); }
   tr.flags-4, tr.flags-5, tr.flags-6, tr.flags-7, tr.flags-8, tr.flags-9 { background: var(--flag3); }
+  tr.flags-10, tr.flags-11, tr.flags-12 { background: var(--flag3); }
   tr.flags-2 td:first-child { border-left: 4px solid var(--flag2-border); }
   tr.flags-1 td:first-child { border-left: 4px solid var(--flag1-border); }
   tr.flags-0 td:first-child { border-left: 4px solid var(--flag0-border); }
   tr.flags-3 td:first-child { border-left: 4px solid var(--flag3-border); }
   tr.flags-4 td:first-child, tr.flags-5 td:first-child, tr.flags-6 td:first-child,
-  tr.flags-7 td:first-child, tr.flags-8 td:first-child, tr.flags-9 td:first-child { border-left: 4px solid var(--flag3-border); }
+  tr.flags-7 td:first-child, tr.flags-8 td:first-child, tr.flags-9 td:first-child,
+  tr.flags-10 td:first-child, tr.flags-11 td:first-child, tr.flags-12 td:first-child {
+    border-left: 4px solid var(--flag3-border);
+  }
   .badge {
     display: inline-block;
     padding: 2px 8px;
@@ -123,6 +127,9 @@
   .badge-defense-dd { background: #c05b2c; color: white; }
   .badge-defense-avg { background: #3d7f56; color: white; }
   .badge-bottom { background: #8b3f5f; color: white; }
+  .badge-low-dd { background: #a34f22; color: white; }
+  .badge-low-avg { background: #356c9b; color: white; }
+  .badge-bad-suit { background: #6b5b2a; color: white; }
   .badge-none { background: #7fbf8f; color: #08370f; }
   .muted { color: var(--muted); }
   .note {
@@ -202,6 +209,9 @@
   <span class="badge badge-defense-dd">DEF-DD</span> while defending, the partnership allowed more tricks than the double-dummy analysis says the declarer should make.<br>
   <span class="badge badge-defense-avg">DEF-AVG</span> while defending, the partnership allowed more tricks than the field average for that contract and declaring seat.<br>
   <span class="badge badge-bottom">BOTTOM</span> the partnership had the worst comparable result: fewest tricks when declaring or most tricks allowed when defending.<br>
+  <span class="badge badge-low-dd">LOW-DD</span> the partnership stopped below a game or slam level supported by double dummy.<br>
+  <span class="badge badge-low-avg">LOW-AVG</span> the partnership stopped below a game or slam level supported by the field's average bid.<br>
+  <span class="badge badge-bad-suit">BAD-SUIT</span> the partnership reached game or slam in a suit that was worse than both the double-dummy and field-preferred suits.<br>
   Rows are sorted with the most-flagged boards first. Comparisons are always seat-for-seat (e.g. North-declared spades vs. North-declared spades) since North/South/East/West each hold a fixed, different hand for a given board &mdash; only same-seat results are truly apples-to-apples.
 </div>
 
@@ -433,6 +443,45 @@ function analyzeDocument(doc, targetName, seatFilter) {
       const typicalSuits = Object.keys(suitCounts).filter(suit => suitCounts[suit] === maxSuitCount);
       const flagAtypical = isPartnershipDeclarer && seatPeers.length > 0 && !typicalSuits.includes(rd.contract.suit);
 
+      const gameTricks = suit => suit === 'NT' ? 9 : (suit === 'H' || suit === 'S' ? 10 : 11);
+      const contractLevelForTricks = (suit, tricks) => {
+        const level = Math.floor(tricks) - 6;
+        return Math.max(0, Math.min(7, level));
+      };
+      const ddPreferredSuits = ddSuitTricks.length
+        ? ddSuitTricks.filter(item => item.tricks === bestDDTricks).map(item => item.suit)
+        : [];
+      const fieldSuitStats = {};
+      seatPeers.forEach(other => {
+        const suit = other.contract.suit;
+        if (!fieldSuitStats[suit]) fieldSuitStats[suit] = { count: 0, totalLevel: 0 };
+        fieldSuitStats[suit].count += 1;
+        fieldSuitStats[suit].totalLevel += other.contract.level;
+      });
+      const fieldSuitEntries = Object.entries(fieldSuitStats).map(([suit, stats]) => ({
+        suit, count: stats.count, averageLevel: stats.totalLevel / stats.count
+      }));
+      const highestFieldAverage = fieldSuitEntries.length
+        ? Math.max(...fieldSuitEntries.map(item => item.averageLevel))
+        : null;
+      const fieldPreferredSuits = highestFieldAverage === null ? [] : fieldSuitEntries
+        .filter(item => item.averageLevel === highestFieldAverage)
+        .map(item => item.suit);
+      const currentGameLevel = contractLevelForTricks(rd.contract.suit, gameTricks(rd.contract.suit));
+      const currentIsGameOrSlam = rd.contract.level >= currentGameLevel;
+      const ddSupportsSlam = bestDDTricks !== null && bestDDTricks >= 12;
+      const ddSupportsGame = ddPreferredSuits.length > 0 &&
+        bestDDTricks >= gameTricks(ddPreferredSuits[0]);
+      const fieldSupportsSlam = highestFieldAverage !== null && highestFieldAverage + 6 >= 12;
+      const fieldSupportsGame = fieldPreferredSuits.length > 0 &&
+        highestFieldAverage + 6 >= gameTricks(fieldPreferredSuits[0]);
+      const flagLowDD = isPartnershipDeclarer &&
+        ((ddSupportsSlam && rd.contract.level < 6) || (ddSupportsGame && !ddSupportsSlam && !currentIsGameOrSlam));
+      const flagLowAverage = isPartnershipDeclarer &&
+        ((fieldSupportsSlam && rd.contract.level < 6) || (fieldSupportsGame && !fieldSupportsSlam && !currentIsGameOrSlam));
+      const flagBadSuit = isPartnershipDeclarer && currentIsGameOrSlam &&
+        !ddPreferredSuits.includes(rd.contract.suit) && !fieldPreferredSuits.includes(rd.contract.suit);
+
       let partner, opponents;
       const partnerSeat = targetSeat === 'N' ? 'S' : targetSeat === 'S' ? 'N' : targetSeat === 'E' ? 'W' : 'E';
       partner = seatNames[partnerSeat];
@@ -449,9 +498,11 @@ function analyzeDocument(doc, targetName, seatFilter) {
         tricks: rd.tricks, ddTricks, flagDD, bestPeer, flagPeer, averageContract, flagAverage,
         averageBidLevel, flagBidDD, flagBidAverage, flagAtypical,
         partner, opponents, isDefense, isPartnerDeclared, flagDefenseDD, flagDefenseAverage, flagBottom,
+        flagLowDD, flagLowAverage, flagBadSuit,
         flagCount: (flagDD ? 1 : 0) + (flagPeer ? 1 : 0) + (flagAverage ? 1 : 0) +
           (flagBidDD ? 1 : 0) + (flagBidAverage ? 1 : 0) + (flagAtypical ? 1 : 0) +
-          (flagDefenseDD ? 1 : 0) + (flagDefenseAverage ? 1 : 0) + (flagBottom ? 1 : 0)
+          (flagDefenseDD ? 1 : 0) + (flagDefenseAverage ? 1 : 0) + (flagBottom ? 1 : 0) +
+          (flagLowDD ? 1 : 0) + (flagLowAverage ? 1 : 0) + (flagBadSuit ? 1 : 0)
       });
     });
   });
@@ -543,9 +594,12 @@ function renderResults(results, name, seat) {
   const flagged7 = results.filter(r => r.flagCount === 7).length;
   const flagged8 = results.filter(r => r.flagCount === 8).length;
   const flagged9 = results.filter(r => r.flagCount === 9).length;
+  const flagged10 = results.filter(r => r.flagCount === 10).length;
+  const flagged11 = results.filter(r => r.flagCount === 11).length;
+  const flagged12 = results.filter(r => r.flagCount === 12).length;
   summaryEl.innerHTML = `<strong>${results.length}</strong> board(s) analyzed for <strong>${escapeHtml(name)}</strong>` +
     (seat !== 'Any' ? ` (seat: ${seatLabel(seat)})` : ' (any seat)') +
-    ` &mdash; ${flagged9} board(s) with nine flags, ${flagged8} with eight, ${flagged7} with seven, ${flagged6} with six, ${flagged5} with five, ${flagged4} with four, ${flagged3} with three, ${flagged2} with two, ${flagged1} with one, ${flagged0} with no flags.`;
+    ` &mdash; ${flagged12} board(s) with twelve flags, ${flagged11} with eleven, ${flagged10} with ten, ${flagged9} with nine, ${flagged8} with eight, ${flagged7} with seven, ${flagged6} with six, ${flagged5} with five, ${flagged4} with four, ${flagged3} with three, ${flagged2} with two, ${flagged1} with one, ${flagged0} with no flags.`;
 
   results.forEach(r => {
     const tr = document.createElement('tr');
@@ -572,8 +626,11 @@ function renderResults(results, name, seat) {
     if (r.flagBidAverage) badges += '<span class="badge badge-bid-avg">BID-AVG</span>';
     if (r.flagAtypical) badges += '<span class="badge badge-atypical">ATYPICAL</span>';
     if (r.flagBottom) badges += '<span class="badge badge-bottom">BOTTOM</span>';
+    if (r.flagLowDD) badges += '<span class="badge badge-low-dd">LOW-DD</span>';
+    if (r.flagLowAverage) badges += '<span class="badge badge-low-avg">LOW-AVG</span>';
+    if (r.flagBadSuit) badges += '<span class="badge badge-bad-suit">BAD-SUIT</span>';
     if (!r.flagDD && !r.flagPeer && !r.flagAverage && !r.flagBidDD && !r.flagBidAverage && !r.flagAtypical &&
-      !r.flagDefenseDD && !r.flagDefenseAverage && !r.flagBottom) {
+      !r.flagDefenseDD && !r.flagDefenseAverage && !r.flagBottom && !r.flagLowDD && !r.flagLowAverage && !r.flagBadSuit) {
       badges = '<span class="badge badge-none">clean</span>';
     }
 
